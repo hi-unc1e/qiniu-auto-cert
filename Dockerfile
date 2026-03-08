@@ -25,6 +25,9 @@ COPY healthcheck.sh /acme.sh/
 # 设置权限
 RUN chmod +x /acme.sh/deploy-qiniu.sh /acme.sh/entrypoint.sh /acme.sh/healthcheck.sh
 
+# 暴露端口（HTTP 验证需要）
+EXPOSE 80
+
 # 设置环境变量默认值
 ENV ACME_SERVER=letsencrypt \
     RENEW_DAYS=7 \

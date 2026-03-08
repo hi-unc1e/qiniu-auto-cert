@@ -20,10 +20,14 @@ show_config() {
     log "======================================"
     log "域名: $DOMAIN"
     log "邮箱: $EMAIL"
-    log "ACME 服务器: $ACME_SERVER"
-    log "续期阈值: $RENEW_DAYS 天"
-    log "检查间隔: $CHECK_INTERVAL 秒"
-    log "DNS API: $DNS_API"
+    log "ACME 服务器: ${ACME_SERVER:-letsencrypt}"
+    log "续期阈值: ${RENEW_DAYS:-7} 天"
+    log "检查间隔: ${CHECK_INTERVAL:-86400} 秒"
+    if [ -n "$DNS_API" ]; then
+        log "验证方式: DNS ($DNS_API)"
+    else
+        log "验证方式: HTTP (standalone)"
+    fi
     if [ -n "$QINIU_CDN_DOMAIN" ]; then
         log "七牛 CDN 域名: $QINIU_CDN_DOMAIN"
     fi
@@ -37,11 +41,6 @@ validate_env() {
     [ -n "$EMAIL" ] || error "环境变量 EMAIL 未设置"
     [ -n "$QINIU_AK" ] || error "环境变量 QINIU_AK 未设置"
     [ -n "$QINIU_SK" ] || error "环境变量 QINIU_SK 未设置"
-
-    # DNS 验证方式
-    if [ -z "$DNS_API" ]; then
-        error "环境变量 DNS_API 未设置，请指定 DNS 验证方式 (如: dns_dp, dns_ali, dns_cf 等)"
-    fi
 
     log "环境变量验证通过"
 }
@@ -75,7 +74,23 @@ initial_cert() {
 
     log "首次申请证书..."
 
-    # 根据不同的 DNS API 设置相应的环境变量
+    # 判断使用 DNS 验证还是 HTTP 验证
+    if [ -n "$DNS_API" ]; then
+        # DNS 验证方式
+        setup_dns_vars
+        issue_cert_dns
+    else
+        # HTTP 验证方式 (standalone 模式)
+        log "使用 HTTP standalone 模式验证（确保域名 A 记录指向当前机器）"
+        issue_cert_http
+    fi
+
+    # 部署证书到七牛云
+    deploy_cert
+}
+
+# 设置 DNS API 环境变量
+setup_dns_vars() {
     case "$DNS_API" in
         dns_dp)
             [ -n "$DP_Id" ] || error "DNS_API=dns_dp 需要 DP_Id 环境变量"
@@ -105,27 +120,50 @@ initial_cert() {
             log "警告: DNS_API '$DNS_API' 可能需要额外的环境变量"
             ;;
     esac
+}
 
-    # 申请证书
+# 使用 DNS 验证申请证书
+issue_cert_dns() {
+    log "使用 DNS 验证方式申请证书..."
+
     if /root/.acme.sh/acme.sh --issue --dns "$DNS_API" -d "$DOMAIN" \
         --keylength 2048 \
-        --server "$ACME_SERVER"; then
+        --server "${ACME_SERVER:-letsencrypt}"; then
         log "证书申请成功"
     else
         error "证书申请失败"
     fi
+}
 
-    # 部署证书到七牛云
-    deploy_cert
+# 使用 HTTP 验证申请证书
+issue_cert_http() {
+    log "使用 HTTP standalone 验证方式申请证书..."
+
+    # 检查 80 端口是否可用
+    if nc -z localhost 80 2>/dev/null; then
+        log "警告: 80 端口已被占用，尝试使用 8080 端口..."
+        HTTP_PORT=8080
+    else
+        HTTP_PORT=80
+    fi
+
+    if /root/.acme.sh/acme.sh --issue -d "$DOMAIN" \
+        --standalone \
+        --httpport "$HTTP_PORT" \
+        --keylength 2048 \
+        --server "${ACME_SERVER:-letsencrypt}"; then
+        log "证书申请成功"
+    else
+        error "证书申请失败（请确保域名 A 记录指向当前机器且 80 端口可访问）"
+    fi
 }
 
 # 续期证书
 renew_cert() {
     log "检查证书续期..."
 
-    # 强制续期（用于测试证书是否有效）
     # acme.sh 会自动检查证书有效期，只有接近过期才会真正续期
-    if /root/.acme.sh/acme.sh --renew -d "$DOMAIN" --force --days "$RENEW_DAYS"; then
+    if /root/.acme.sh/acme.sh --renew -d "$DOMAIN" --force --days "${RENEW_DAYS:-7}"; then
         log "证书检查/续期完成"
         deploy_cert
     else
@@ -146,7 +184,10 @@ deploy_cert() {
         log "证书部署成功"
 
         # 记录部署信息
-        log "证书已上传到七牛云，certID: $(/root/.acme.sh/acme.sh --list | grep "$DOMAIN" | awk '{print $3}')"
+        CERT_INFO=$(/root/.acme.sh/acme.sh --list | grep "$DOMAIN")
+        if [ -n "$CERT_INFO" ]; then
+            log "证书信息: $CERT_INFO"
+        fi
         return 0
     else
         log "证书部署失败"
@@ -170,7 +211,7 @@ start_daemon() {
         sleep "$INTERVAL"
 
         log "执行定期检查..."
-        if /root/.acme.sh/acme.sh --renew -d "$DOMAIN" --days "$RENEW_DAYS"; then
+        if /root/.acme.sh/acme.sh --renew -d "$DOMAIN" --days "${RENEW_DAYS:-7}"; then
             deploy_cert
         fi
     done
