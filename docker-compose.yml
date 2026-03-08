@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  qiniu-auto-cert:
+    build: .
+    container_name: qiniu-auto-cert
+    restart: always
+    env_file:
+      - .env
+    environment:
+      # 时区
+      - TZ=Asia/Shanghai
+    volumes:
+      # 持久化 acme.sh 配置和证书
+      - acme-data:/root/.acme.sh
+    healthcheck:
+      test: ["/acme.sh/healthcheck.sh"]
+      interval: 1h
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  acme-data:
+    driver: local

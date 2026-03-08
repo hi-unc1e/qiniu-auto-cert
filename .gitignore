@@ -1,0 +1,18 @@
+# 环境配置（包含敏感信息）
+.env
+
+# Docker
+*.log
+
+# macOS
+.DS_Store
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 临时文件
+acmd.sh_README.md
+src_qiniu-auto-cert/
