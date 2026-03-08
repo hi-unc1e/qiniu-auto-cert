@@ -14,6 +14,9 @@ ENV TZ=Asia/Shanghai
 # 安装 acme.sh
 RUN curl https://get.acme.sh | sh
 
+# 设置 acme.sh 到 PATH（重要！）
+ENV PATH="/root/.acme.sh:${PATH}"
+
 # 设置工作目录
 WORKDIR /acme.sh
 
@@ -27,6 +30,9 @@ RUN chmod +x /acme.sh/deploy-qiniu.sh /acme.sh/entrypoint.sh /acme.sh/healthchec
 
 # 暴露端口（HTTP 验证需要）
 EXPOSE 80
+
+# 持久化卷 - 保存证书和 acme.sh 配置
+VOLUME ["/root/.acme.sh"]
 
 # 设置环境变量默认值
 ENV ACME_SERVER=letsencrypt \
